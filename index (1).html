@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Ptichka Napels — File Scanner</title>
+<style>
+*{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;background:#0b1020;color:#eef2ff;min-height:100vh}
+.wrap{max-width:900px;margin:auto;padding:32px 16px}.logo{font-size:30px;font-weight:800}.sub{color:#9ca8c7;margin-top:6px}
+.card{margin-top:24px;background:#151c31;border:1px solid #2a3554;border-radius:20px;padding:22px;box-shadow:0 20px 60px #0005}
+.drop{border:2px dashed #53658f;border-radius:16px;padding:38px 16px;text-align:center;cursor:pointer}
+.drop:hover,.drop.over{border-color:#8ea8ff;background:#1b2540}.icon{font-size:46px}.hint{color:#9ca8c7}
+button{border:0;border-radius:12px;padding:12px 18px;background:#6d8cff;color:white;font-weight:700;cursor:pointer}
+.result{margin-top:20px;padding:16px;border-radius:14px;background:#0e1527;display:none}
+.status{font-size:19px;font-weight:800}.safe{color:#6ee7a0}.warn{color:#ffd166}
+.row{display:flex;justify-content:space-between;gap:12px;border-bottom:1px solid #27324e;padding:10px 0;color:#cbd5e1;flex-wrap:wrap}
+.row:last-child{border:0}.value{overflow-wrap:anywhere;text-align:right}.bar{height:8px;background:#26304a;border-radius:99px;overflow:hidden;margin:14px 0}.fill{height:100%;width:0;background:#8ea8ff}
+small{color:#7f8ba8}.note{font-size:13px;line-height:1.5;color:#9ca8c7;margin-top:16px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="logo">🐦 Ptichka Napels</div>
+  <div class="sub">Безопасный анализатор файлов</div>
+  <div class="card">
+    <div id="drop" class="drop">
+      <div class="icon">🛡️</div>
+      <h2>Выбери файл для проверки</h2>
+      <div class="hint">Файл не запускается и не загружается в интернет</div><br>
+      <button type="button" id="pick">Выбрать файл</button>
+      <input id="file" type="file" hidden>
+    </div>
+    <div id="result" class="result">
+      <div id="status" class="status">Подготовка...</div>
+      <div class="bar"><div id="fill" class="fill"></div></div>
+      <div id="info"></div>
+      <small id="progress"></small>
+    </div>
+    <div class="note">Важно: это локальная демонстрационная проверка, а не полноценный антивирус. Большие файлы обрабатываются частями, чтобы не загружать весь файл в память сразу.</div>
+  </div>
+</div>
+<script>
+const drop=document.querySelector('#drop'), input=document.querySelector('#file');
+const result=document.querySelector('#result'), status=document.querySelector('#status');
+const info=document.querySelector('#info'), fill=document.querySelector('#fill'), progress=document.querySelector('#progress');
+document.querySelector('#pick').onclick=()=>input.click();
+input.onchange=()=>input.files[0]&&scan(input.files[0]);
+['dragenter','dragover'].forEach(e=>drop.addEventListener(e,x=>{x.preventDefault();drop.classList.add('over')}));
+['dragleave','drop'].forEach(e=>drop.addEventListener(e,x=>{x.preventDefault();drop.classList.remove('over')}));
+drop.addEventListener('drop',e=>e.dataTransfer.files[0]&&scan(e.dataTransfer.files[0]));
+function esc(s){return s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]))}
+function formatBytes(bytes){
+  if(bytes===0)return '0 Б';
+  const units=['Б','КБ','МБ','ГБ','ТБ'];
+  const i=Math.min(Math.floor(Math.log(bytes)/Math.log(1024)),units.length-1);
+  const value=bytes/Math.pow(1024,i);
+  return (i===0?String(bytes):value.toLocaleString('ru-RU',{maximumFractionDigits:2}))+' '+units[i];
+}
+// SHA-256 computed in chunks, avoiding reading the entire file into memory.
+// A compact incremental SHA-256 implementation is included for large files.
+function createSHA256(){
+ const K=[0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2];
+ let h=[0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19], buffer=new Uint8Array(64), used=0, total=0;
+ const rr=(x,n)=>(x>>>n)|(x<<(32-n));
+ function block(b){let w=new Uint32Array(64);for(let i=0;i<16;i++)w[i]=((b[i*4]<<24)|(b[i*4+1]<<16)|(b[i*4+2]<<8)|b[i*4+3])>>>0;
+ for(let i=16;i<64;i++){let a=w[i-15],z=w[i-2],s0=rr(a,7)^rr(a,18)^(a>>>3),s1=rr(z,17)^rr(z,19)^(z>>>10);w[i]=(w[i-16]+s0+w[i-7]+s1)>>>0}
+ let [a,b0,c,d,e,f,g,hh]=h;
+ for(let i=0;i<64;i++){let S1=rr(e,6)^rr(e,11)^rr(e,25),ch=(e&f)^(~e&g),t1=(hh+S1+ch+K[i]+w[i])>>>0,S0=rr(a,2)^rr(a,13)^rr(a,22),maj=(a&b0)^(a&c)^(b0&c),t2=(S0+maj)>>>0;hh=g;g=f;f=e;e=(d+t1)>>>0;d=c;c=b0;b0=a;a=(t1+t2)>>>0}
+ h=[(h[0]+a)>>>0,(h[1]+b0)>>>0,(h[2]+c)>>>0,(h[3]+d)>>>0,(h[4]+e)>>>0,(h[5]+f)>>>0,(h[6]+g)>>>0,(h[7]+hh)>>>0]}
+ function update(data){total+=data.length;let p=0;while(p<data.length){let n=Math.min(64-used,data.length-p);buffer.set(data.subarray(p,p+n),used);used+=n;p+=n;if(used===64){block(buffer);used=0}}}
+ function digest(){let bitHi=Math.floor(total/0x20000000),bitLo=(total*8)>>>0;buffer[used++]=0x80;if(used>56){buffer.fill(0,used);block(buffer);used=0}buffer.fill(0,used,56);buffer[56]=(bitHi>>>24)&255;buffer[57]=(bitHi>>>16)&255;buffer[58]=(bitHi>>>8)&255;buffer[59]=bitHi&255;buffer[60]=(bitLo>>>24)&255;buffer[61]=(bitLo>>>16)&255;buffer[62]=(bitLo>>>8)&255;buffer[63]=bitLo&255;block(buffer);return h.map(x=>x.toString(16).padStart(8,'0')).join('')}
+ return {update,digest}
+}
+async function scan(file){
+ result.style.display='block';status.className='status';status.textContent='🔎 Анализируем файл...';fill.style.width='0%';info.innerHTML='';progress.textContent='Подсчёт SHA-256...';
+ const ext=(file.name.split('.').pop()||'').toLowerCase(), risky=['exe','dll','scr','bat','cmd','ps1','vbs','js','jar','msi'];
+ const sha=createSHA256(), chunkSize=2*1024*1024;
+ try{
+  for(let start=0;start<file.size;start+=chunkSize){
+   const end=Math.min(start+chunkSize,file.size);
+   const bytes=new Uint8Array(await file.slice(start,end).arrayBuffer());
+   sha.update(bytes);
+   fill.style.width=Math.round(end/Math.max(file.size,1)*90)+'%';
+   progress.textContent=`Обработано ${formatBytes(end)} из ${formatBytes(file.size)}…`;
+   await new Promise(r=>setTimeout(r,0));
+  }
+  const hash=sha.digest(), suspicious=risky.includes(ext);
+  fill.style.width='100%';
+  status.textContent=suspicious?'⚠️ Требуется дополнительная проверка':'✅ Явных признаков угрозы не найдено';
+  status.className='status '+(suspicious?'warn':'safe');
+  info.innerHTML=
+   `<div class="row"><span>Файл</span><b class="value">${esc(file.name)}</b></div>`+
+   `<div class="row"><span>Размер</span><b class="value">${formatBytes(file.size)} (${file.size.toLocaleString('ru-RU')} байт)</b></div>`+
+   `<div class="row"><span>Тип</span><b class="value">${esc(file.type||'не определён')}</b></div>`+
+   `<div class="row"><span>SHA-256</span><b class="value">${hash}</b></div>`+
+   `<div class="row"><span>Результат</span><b class="value">${suspicious?'Подозрительное расширение':'Демо-проверка пройдена'}</b></div>`;
+  progress.textContent='Готово. Это не полноценная антивирусная проверка.';
+ }catch(e){status.textContent='Не удалось прочитать файл';status.className='status warn';progress.textContent='Попробуй выбрать файл ещё раз.'}
+}
+</script>
+</body></html>
